@@ -18,6 +18,11 @@ public class BeeFlight : MonoBehaviour
     public float gravity = 9.81f;
     public float stabilityThreshold = 0.3f; 
 
+    [Header("Game Rules")]
+    public float maxAltitude = 10f; 
+    public LayerMask groundLayer;
+    public bool isGameOver = false; 
+
     [Header("Animation")]
     public Animator animator;
     public string animationMultiplierParam = "WingSpeed"; 
@@ -47,75 +52,94 @@ public class BeeFlight : MonoBehaviour
 
     void Update()
     {
-        HandleRotation();
+        // jeśli gra się skończyła, nadal obsługujemy spadanie, ale nie rotację
+        if (!isGameOver)
+        {
+            HandleRotation();
+        }
+        
         HandleMovement();
         UpdateAnimations();
+    }
+    // sprawdza, czy pszczoła powinna zacząć swobodnie spadać
+    bool ShouldFreeFall()
+    {
+        // koniec gry
+        if (isGameOver) return true;
+
+        // sprawdzenie rotacji 
+        float liftFactor = Vector3.Dot(transform.up, Vector3.up);
+        if (liftFactor < stabilityThreshold) return true;
+
+        // sprawdzenie wysokości od terenu
+        if (Physics.Raycast(transform.position, Vector3.down, out RaycastHit hit, Mathf.Infinity, groundLayer))
+        {
+            if (hit.distance > maxAltitude) return true;
+        }
+
+        return false;
     }
 
     void HandleRotation()
     {
-        // myszka
         Vector2 lookDelta = Look.ReadValue<Vector2>();
-        // q i e
         float rollVal = RollInput.ReadValue<float>();
 
-        // rotacje wokół osi Y (yaw), X (pitch) i Z (roll)
         NewQuaternion yaw = NewQuaternion.FromAngleAxis(lookDelta.x * mouseSensitivity, Vector3.up);
         NewQuaternion pitch = NewQuaternion.FromAngleAxis(-lookDelta.y * mouseSensitivity, Vector3.right);
         NewQuaternion roll = NewQuaternion.FromAngleAxis(-rollVal * rollSpeed * Time.deltaTime, Vector3.forward);
 
-
-        // składanie rotacji
         currentOrientation = currentOrientation * yaw * pitch * roll;
         currentOrientation = currentOrientation.Normalize();
         
-        // aplikacja do transformacji
         transform.rotation = currentOrientation.ToUnityQuaternion();
     }
 
     void HandleMovement()
     {
-        // w a s d space ctrl
-        Vector3 input = Move.ReadValue<Vector3>();
+        // sprawdzanie swobodnego spadania
+        bool isFalling = ShouldFreeFall();
 
-        // czy pszczoła ma nośność (czy jest "prawidłowo" ustawiona)
-        float liftFactor = Vector3.Dot(transform.up, Vector3.up);
+        // jeśli gra się skończyła, ignorujemy input ruchu
+        Vector3 input = isGameOver ? Vector3.zero : Move.ReadValue<Vector3>();
 
-        //reset na ziemi
-        if (controller.isGrounded && liftFactor > stabilityThreshold)
+        // reset na ziemi
+        if (controller.isGrounded && !isFalling)
         {
             verticalVelocity = 0; 
         }
-        // opadanie przy braku nośności
-        else if (liftFactor < stabilityThreshold)
+        // opadanie
+        else if (isFalling)
         {
             verticalVelocity -= gravity * Time.deltaTime;
         }
-         // odzyskiwanie stabilności
+        // odzyskiwanie stabilności
         else
         {
             verticalVelocity = Mathf.Lerp(verticalVelocity, 0, Time.deltaTime * 2f);
         }
 
-        // ruch w przestrzeni świata
         Vector3 worldMove = transform.TransformDirection(input * flySpeed);
         worldMove.y += verticalVelocity;
 
         controller.Move(worldMove * Time.deltaTime);
     }
 
+    // aktualizacja animacji skrzydeł
     void UpdateAnimations()
     {
         if (animator == null) return;
 
-        // sprawdzamy czy pszczoła spada
-        float liftFactor = Vector3.Dot(transform.up, Vector3.up);
+        bool isFalling = ShouldFreeFall();
         
-        // wolniejsza animacja przy opadaniu
-        float targetSpeed = (liftFactor < stabilityThreshold) ? fallingWingSpeed : normalWingSpeed;
+        float targetSpeed = isFalling ? fallingWingSpeed : normalWingSpeed;
 
-        // płynne przejście
         currentWingSpeed = Mathf.Lerp(currentWingSpeed, targetSpeed, Time.deltaTime * animLerpSpeed);
         animator.SetFloat(animationMultiplierParam, currentWingSpeed);
+    }
+    
+    public void EndGame()
+    {
+        isGameOver = true;
     }
 }
